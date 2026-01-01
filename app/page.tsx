@@ -1,94 +1,181 @@
 'use client'
-import { useState, useCallback } from 'react';
-import Mermaid from '@/components/Mermaid';
-import CodeMirror from '@uiw/react-codemirror';
-import { markdown } from '@codemirror/lang-markdown'; // or import { markdown } if this fails
-import { tokyoNight } from '@uiw/codemirror-theme-tokyo-night';
 
-export default function Home() {
-  const [code, setCode] = useState(`graph TD
-  A[Start] --> B{Is it cooked?}
-  B -- Yes --> C[Restart]
-  B -- No --> D[Let him cook]`);
+import { useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { useUserStore } from '@/store/userStore'
+import CreateDiagramModal from '@/components/CreateDiagramModal'
+import { useRouter } from 'next/navigation'
+import { Trash2, Edit3, Loader2, Database, FileCode } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { toast } from 'sonner'
+import Image from 'next/image'
 
-  const [zoom, setZoom] = useState(1);
+interface Diagram {
+  diagram_id: string
+  title: string
+  code: string
+  thumbnail_url: string | null
+  created_at: string
+}
 
-  // Zoom Logic
-  const handleZoom = (delta: number) => {
-    setZoom(prev => Math.min(Math.max(prev + delta, 0.5), 5));
-  };
+export default function Dashboard() {
+  const supabase = createClient()
+  const { user, profile } = useUserStore()
+  const router = useRouter()
+  
+  const [diagrams, setDiagrams] = useState<Diagram[]>([])
+  const [isFetching, setIsFetching] = useState(true)
+  const [isMounted, setIsMounted] = useState(false)
 
-  // Download Logic
-  const downloadSVG = () => {
-    const svg = document.querySelector('svg[id^="mermaid-"]');
-    if (!svg) return;
-    const svgData = new XMLSerializer().serializeToString(svg);
-    const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'diagram.svg';
-    link.click();
-  };
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
 
-  // Handle Editor Change
-  const onChange = useCallback((val: string) => {
-    setCode(val);
-  }, []);
+  useEffect(() => {
+    if (!isMounted) return
+    if (!user) {
+        router.replace('/login')
+        return
+    }
+
+    const fetchDiagrams = async () => {
+      try {
+        const { data, error } = await supabase
+            .from('diagrams')
+            .select('*')
+            .eq('created_by', user.id)
+            .order('created_at', { ascending: false })
+
+        if (error) throw error
+        setDiagrams(data || [])
+      } catch (err: any) {
+         console.error("Fetch failed:", err)
+      } finally {
+        setIsFetching(false)
+      }
+    }
+
+    fetchDiagrams()
+
+  }, [isMounted, user, router, supabase]) 
+
+  const handleDelete = async (id: string) => {
+     toast.promise(
+        async () => {
+            const { error } = await supabase.from('diagrams').delete().eq('diagram_id', id)
+            if (error) throw error
+            setDiagrams((prev) => prev.filter(d => d.diagram_id !== id))
+        },
+        { loading: 'Deleting...', success: 'Deleted', error: 'Failed' }
+    )
+  }
+
+  if (!isMounted) return null 
+  if (!user) return null 
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-200 font-sans overflow-hidden">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-mono relative">
       
-      {/* Left: Editor */}
-      <div className="w-1/3 flex flex-col border-r border-zinc-800 z-10 bg-[#1a1b26]">
-        <div className="p-4 border-b border-zinc-800 bg-[#1a1b26] flex justify-between items-center shadow-md">
-          <span className="font-bold text-sm tracking-wider text-zinc-400">EDITOR</span>
-          <button 
-            onClick={downloadSVG}
-            className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded transition font-medium"
-          >
-            Export SVG
-          </button>
+      {/* HEADER */}
+      <header className="border-b-2 border-zinc-800 bg-zinc-900/80 p-4 flex justify-between items-center sticky top-0 z-50 backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_#22c55e]" />
+          <h1 className="text-xl font-bold tracking-tighter">MERMAIDJS<span className="text-zinc-500">_DASHBOARD</span></h1>
         </div>
         
-        {/* The Upgrade: CodeMirror */}
-        <div className="flex-1 overflow-auto text-sm">
-          <CodeMirror
-            value={code}
-            height="100%"
-            theme={tokyoNight}
-            extensions={[markdown()]} // Gives syntax highlighting
-            onChange={onChange}
-            className="h-full"
-            basicSetup={{
-              autocompletion: true,  // Tries to guess words
-              bracketMatching: true, // Highlights matching brackets
-              closeBrackets: true,   // Auto-closes brackets () [] {}
-              indentOnInput: true,   // Smart indent
-              tabSize: 2,
-            }}
-          />
+        <div className="flex items-center gap-4">
+           <div className="hidden md:flex flex-col text-right text-xs text-zinc-500 leading-tight">
+              <span>USER: {profile?.name.toUpperCase()}</span>
+           </div>
+           <Button 
+             variant="destructive"
+             className="h-8 text-xs uppercase bg-red-950/30 hover:bg-red-900 text-red-500 hover:text-white border border-red-900 hover:cursor-pointer rounded-none"
+             onClick={async () => {
+                await supabase.auth.signOut()
+                router.refresh()
+             }}
+           >
+             DISCONNECT
+           </Button>
         </div>
-      </div>
+      </header>
 
-      {/* Right: Preview (Unchanged) */}
-      <div className="w-2/3 flex flex-col bg-zinc-950 relative h-full">
-         <div className="p-4 border-b border-zinc-800 bg-zinc-900 flex justify-between items-center shadow-md z-10">
-          <span className="font-bold text-sm tracking-wider text-zinc-400">PREVIEW</span>
-          <div className="flex gap-2 items-center bg-zinc-800 rounded-lg p-1">
-            <button onClick={() => handleZoom(-0.2)} className="w-8 h-8 flex items-center justify-center hover:bg-zinc-700 rounded text-zinc-400">-</button>
-            <span className="text-xs font-mono w-12 text-center text-zinc-500">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => handleZoom(0.2)} className="w-8 h-8 flex items-center justify-center hover:bg-zinc-700 rounded text-zinc-400">+</button>
-            <div className="w-px h-4 bg-zinc-700 mx-1"></div>
-            <button onClick={() => setZoom(1)} className="text-xs px-2 hover:bg-zinc-700 h-8 rounded text-zinc-400">Reset</button>
+      {/* MAIN CONTENT */}
+      <main className="p-6 max-w-7xl mx-auto z-10 relative">
+        <div className="flex justify-between items-end mb-8 border-b border-zinc-800 pb-4">
+          <div>
+            <h2 className="text-3xl font-black text-white mb-1">DIAGRAM INDEX</h2>
+            <p className="text-zinc-500 text-sm flex items-center gap-2">
+              <Database className="w-4 h-4" />
+              {diagrams.length} FILES FOUND
+            </p>
           </div>
+          <CreateDiagramModal userId={user.id} />
         </div>
-        <div className="flex-1 overflow-auto bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:16px_16px] relative">
-            <div className="w-full h-full flex items-center justify-center min-w-max min-h-max p-20 transition-transform duration-200 ease-out origin-center" style={{ transform: `scale(${zoom})` }}>
-              <Mermaid chart={code} />
+
+        {/* LOADING SKELETON */}
+        {isFetching ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {[1,2,3].map((i) => (
+                    <div key={i} className="h-64 bg-zinc-900/50 border border-zinc-800 animate-pulse rounded-sm" />
+                ))}
             </div>
-        </div>
-      </div>
+        ) : diagrams.length === 0 ? (
+           <div className="border-2 border-dashed border-zinc-800 rounded-lg h-64 flex flex-col items-center justify-center text-zinc-600 gap-4">
+              <p>MEMORY BANKS EMPTY.</p>
+           </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {diagrams.map((diagram) => (
+              <div 
+                key={diagram.diagram_id}
+                className="group relative bg-zinc-900 border border-zinc-800 hover:border-green-500/50 transition-all duration-300 flex flex-col"
+              >
+                <div className="h-32 w-full bg-zinc-950 relative border-b border-zinc-800 overflow-hidden">
+                    {diagram.thumbnail_url ? (
+                        <Image 
+                            src={diagram.thumbnail_url} 
+                            alt={diagram.title} 
+                            fill 
+                            className="object-cover opacity-60 group-hover:opacity-100 transition-opacity"
+                            unoptimized
+                        />
+                    ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                            <FileCode className="w-8 h-8 text-zinc-800" />
+                        </div>
+                    )}
+                </div>
+
+                <div className="p-5 flex-1 flex flex-col">
+                  <h3 className="text-lg font-bold text-white mb-1 truncate">{diagram.title}</h3>
+                  <p className="text-xs text-zinc-500 font-mono mb-4 flex-1">
+                    {new Date(diagram.created_at).toLocaleDateString()}
+                  </p>
+
+                  <div className="flex gap-2">
+                    <Button 
+                        variant="outline" 
+                        className="flex-1 bg-transparent border-zinc-700 hover:cursor-pointer hover:bg-green-950/30 hover:text-green-400 hover:border-green-500 rounded-none h-8 text-xs"
+                        onClick={() => router.push(`/design/${diagram.diagram_id}`)}
+                    >
+                        <Edit3 className="w-3 h-3 mr-2" />
+                        ACCESS
+                    </Button>
+                    <Button 
+                        variant="destructive"
+                        className="hover:cursor-pointer rounded-none h-8 w-8 p-0 bg-red-950/30 hover:bg-red-900 text-red-500 hover:text-white border border-red-900"
+                        onClick={() => handleDelete(diagram.diagram_id)}
+                    >
+                        <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
     </div>
-  );
+  )
 }
