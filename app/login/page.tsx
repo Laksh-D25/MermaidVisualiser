@@ -39,8 +39,8 @@ export default function LoginPage() {
     try {
       const { error } = await supabase.auth.signInAnonymously()
       if (error) throw error
-      router.push('/') // Assuming '/' is your dashboard
-      router.refresh() // Force re-run of AuthProvider middleware check
+      router.push('/')
+      router.refresh()
     } catch (error) {
       console.error('Guest Auth error:', error)
       setIsLoading(false)
